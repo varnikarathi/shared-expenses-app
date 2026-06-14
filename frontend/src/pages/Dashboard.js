@@ -28,7 +28,7 @@ export default function Dashboard() {
   const fetchGroups = async () => {
     try {
       const res = await API.get('/groups/');
-      setGroups(res.data);
+      setGroups(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -74,7 +74,7 @@ export default function Dashboard() {
 
         {loading ? (
           <div className="loading">Loading groups...</div>
-        ) : groups.length === 0 ? (
+        ) : !Array.isArray(groups) || groups.length === 0 ? (
           <div className="empty-state">
             <h3>No groups yet</h3>
             <p>Create a group to start splitting expenses</p>
