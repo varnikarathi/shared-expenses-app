@@ -8,7 +8,17 @@ export default function Dashboard() {
   const [form, setForm] = useState({ name: '', description: '' });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  
+  const getUserSafely = () => {
+    try {
+      const u = localStorage.getItem('user');
+      if (!u || u === 'undefined') return {};
+      return JSON.parse(u);
+    } catch (e) {
+      return {};
+    }
+  };
+  const user = getUserSafely();
 
   useEffect(() => {
     fetchGroups();
