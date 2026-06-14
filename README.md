@@ -5,7 +5,7 @@ Handles messy real-world expense data: duplicate entries, currency mismatches, m
 
 ## 🌐 Live Demo
 
-**https://production-9f1ff.up.railway.app**
+**https://shared-expense.up.railway.app**
 
 ## 📁 GitHub Repository
 
