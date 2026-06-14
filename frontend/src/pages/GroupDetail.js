@@ -324,7 +324,9 @@ export default function GroupDetail() {
                 <label>Select User</label>
                 <select value={memberForm.user_id} onChange={e => setMemberForm({ ...memberForm, user_id: e.target.value })} required>
                   <option value="">Select user</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                  {users.filter(u => !members.some(m => m.user.id === u.id)).map(u => (
+                    <option key={u.id} value={u.id}>{u.username}</option>
+                    ))}
                 </select>
               </div>
               <div className="form-group">

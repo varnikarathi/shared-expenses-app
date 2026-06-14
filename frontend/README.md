@@ -1,70 +1,124 @@
-# Getting Started with Create React App
+# Shared Expenses App — Splitwise Clone
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A full-stack shared expense tracking app built for the Spreetail internship assignment.
 
-## Available Scripts
+## Live Demo
+Coming soon (deployment in progress)
 
-In the project directory, you can run:
+## GitHub Repository
+https://github.com/varnikarathi/shared-expenses-app
 
-### `npm start`
+## Tech Stack
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+| Layer | Technology |
+|-------|-----------|
+| Backend | Django 6.0 + Django REST Framework |
+| Database | PostgreSQL 16 |
+| Frontend | React.js |
+| Auth | JWT (djangorestframework-simplejwt) |
+| AI Used | Claude (Anthropic) — claude.ai |
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Features
 
-### `npm test`
+- User registration and login with JWT auth
+- Create and manage groups with time-based membership (members join and leave)
+- Add expenses with 4 split types: Equal, Unequal, Percentage, By Share
+- USD to INR currency conversion (fixed rate: ₹83.5 per USD)
+- Group balances and individual balance summary
+- Debt settlement suggestions using minimum transactions algorithm
+- Record settlements/payments
+- CSV import with full anomaly detection (14 anomalies detected in sample CSV)
+- Detailed import report showing every anomaly and action taken
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Setup Instructions
 
-### `npm run build`
+### Prerequisites
+- Python 3.12+
+- Node.js 22+
+- PostgreSQL 16
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### Backend Setup
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+cd backend
+python -m venv venv
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+# Windows
+venv\Scripts\activate
 
-### `npm run eject`
+# Mac/Linux
+source venv/bin/activate
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+pip install -r requirements.txt
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Create a `.env` file inside the `backend/` folder:
+```
+DB_NAME=shared_expenses
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_HOST=localhost
+DB_PORT=5433
+SECRET_KEY=your-secret-key-here
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+Run migrations and start the server:
+```bash
+python manage.py migrate
+python manage.py runserver
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+Backend runs at: `http://127.0.0.1:8000`
 
-## Learn More
+### Frontend Setup
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+cd frontend
+npm install
+npm start
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Frontend runs at: `http://localhost:3000`
 
-### Code Splitting
+### Create Users
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+Register users via the app at `/register`. For the CSV import to work correctly, register:
+- Aisha, Rohan, Priya, Meera, Dev, Sam
 
-### Analyzing the Bundle Size
+### Import CSV
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+1. Login and create a group
+2. Add all members with correct join dates
+3. Go to Import CSV page
+4. Select group and upload `expenses_export.csv`
+5. View the import report
 
-### Making a Progressive Web App
+## API Endpoints
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+### Auth
+- `POST /api/users/register/` — Register
+- `POST /api/users/login/` — Login
+- `GET /api/users/profile/` — Get profile
+- `GET /api/users/list/` — List all users
 
-### Advanced Configuration
+### Groups
+- `GET/POST /api/groups/` — List/Create groups
+- `GET/PUT/DELETE /api/groups/<id>/` — Group detail
+- `POST /api/groups/<id>/add-member/` — Add member
+- `POST /api/groups/<id>/remove-member/` — Remove member
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+### Expenses
+- `GET/POST /api/expenses/<group_id>/expenses/` — List/Create expenses
+- `GET/PUT/DELETE /api/expenses/<group_id>/expenses/<id>/` — Expense detail
+- `GET /api/expenses/<group_id>/balances/` — Group balances
+- `GET /api/expenses/<group_id>/settlements/` — Settlements
+- `GET /api/expenses/<group_id>/settlement-suggestions/` — Who pays whom
 
-### Deployment
+### Import
+- `POST /api/import/` — Import CSV
+- `GET /api/import/report/<session_id>/` — Get import report
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+## AI Used
 
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+**Claude (Anthropic)** — claude.ai was used as the primary development collaborator.
+See `AI_USAGE.md` for detailed usage log including cases where AI was wrong.
