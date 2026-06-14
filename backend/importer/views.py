@@ -229,6 +229,25 @@ def import_csv(request):
             amount_inr = (amount * USD_TO_INR).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             log_anomaly(i, raw, 'USD_CONVERSION', f'USD amount {amount} converted to INR', 'auto_fixed', f'Converted at rate 83.5: ₹{amount_inr}')
 
+        # DUPLICATE DETECTION
+        dup_key = (str(parsed_date), description.lower().strip(), str(amount))
+        if dup_key in seen_expenses:
+            log_anomaly(i, raw, 'DUPLICATE',
+                f'Possible duplicate of row {seen_expenses[dup_key]}: same date, description, amount',
+                'requires_approval', 'App skipped this duplicate - waiting for your approval',
+                requires_approval=True)
+            skipped.append(i)
+            continue
+        seen_expenses[dup_key] = i
+
+        fuzzy_key = (str(parsed_date), description.lower()[:15])
+        if fuzzy_key in seen_expenses:
+            log_anomaly(i, raw, 'FUZZY_DUPLICATE',
+                f'Possible duplicate of row {seen_expenses[fuzzy_key]}: same date, similar description',
+                'requires_approval', 'Flagged for review',
+                requires_approval=True)
+        seen_expenses[fuzzy_key] = i
+
         # PAID BY
         raw_paid_by = row.get('paid_by', '').strip()
         paid_by_name = normalize_name(raw_paid_by)
@@ -320,24 +339,6 @@ def import_csv(request):
             except Exception:
                 split_type = 'equal'
 
-        # DUPLICATE DETECTION
-        dup_key = (str(parsed_date), description.lower().strip(), str(amount))
-        if dup_key in seen_expenses:
-            log_anomaly(i, raw, 'DUPLICATE',
-                f'Possible duplicate of row {seen_expenses[dup_key]}: same date, description, amount',
-                'requires_approval', 'Flagged for user review - skipped for now',
-                requires_approval=True)
-            skipped.append(i)
-            continue
-        seen_expenses[dup_key] = i
-
-        fuzzy_key = (str(parsed_date), description.lower()[:15])
-        if fuzzy_key in seen_expenses:
-            log_anomaly(i, raw, 'FUZZY_DUPLICATE',
-                f'Possible duplicate of row {seen_expenses[fuzzy_key]}: same date, similar description',
-                'requires_approval', 'Flagged for review',
-                requires_approval=True)
-        seen_expenses[fuzzy_key] = i
 
         # CREATE EXPENSE
         expense = Expense.objects.create(
