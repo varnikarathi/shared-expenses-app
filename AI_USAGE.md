@@ -1,21 +1,28 @@
- # AI_USAGE.md — AI Collaboration Log
+# AI_USAGE.md — AI Collaboration Log
 
-## AI Tool Used
-**Claude (Anthropic)** — claude.ai
-Used as primary development collaborator throughout the entire project.
+## AI Tools Used
+
+| Tool | Used For |
+|------|----------|
+| **Antigravity (Google DeepMind)** | Primary development collaborator in this session — architecture, debugging, implementing balance breakdown, anomaly approval workflow, documentation |
+| **Claude (Anthropic) — claude.ai** | Earlier sessions — initial project scaffolding, models, views, CSV anomaly detection logic |
+
+All AI output was reviewed, understood, and in multiple cases corrected before use. The engineer is responsible for every line submitted.
 
 ---
 
 ## How AI Was Used
 
-Claude was used to:
+AI tools were used to:
 - Plan the project architecture and database schema
-- Generate boilerplate Django models, serializers, views, and URLs
-- Generate React page components and CSS
-- Design the CSV anomaly detection logic
-- Write documentation (README, SCOPE, DECISIONS)
+- Generate boilerplate Django models, serializers, views, and URL configs
+- Generate React page components and styling
+- Design the CSV anomaly detection and classification logic
+- Implement the balance breakdown endpoint (Rohan's requirement)
+- Implement the anomaly approval/rejection workflow (Meera's requirement)
+- Write and update documentation (README, SCOPE, DECISIONS)
 
-All code was reviewed, understood, and in several cases corrected before use.
+Every piece of generated code was read line by line, tested locally, and corrected where necessary.
 
 ---
 
@@ -33,35 +40,55 @@ All code was reviewed, understood, and in several cases corrected before use.
 ### Prompt 4 — Importer Logic
 > "Write a Django view that imports a CSV file and detects these anomalies: duplicates, settlements disguised as expenses, missing payer, invalid amounts with commas, USD currency without conversion, negative amounts, dates after a member left, dates before a member joined, percentages not summing to 100."
 
+### Prompt 5 — Balance Breakdown (Rohan's requirement)
+> "Add a Django endpoint that takes a group_id and user_id and returns, for each expense in the group, how much that user paid and how much their split was, so we can show them exactly which expenses make up their balance total."
+
+### Prompt 6 — Anomaly Approval Workflow (Meera's requirement)
+> "Add approve and reject endpoints for ImportAnomaly objects. Approve should record who approved and when, and update action_taken to auto_fixed. Add a frontend UI with Approve/Reject buttons for any anomaly flagged as requires_approval."
+
 ---
 
 ## Cases Where AI Was Wrong
 
-### Case 1 — Django 6.0 Compatibility Issue
-**What AI gave:** Settings file with `DEFAULT_AUTO_FIELD` and standard middleware.
-**What was wrong:** AI initially suggested `django.middleware.common.CommonMiddleware` before `corsheaders.middleware.CorsMiddleware`. In Django 6.0, CORS middleware must be first or CORS headers are not added to responses.
-**What I changed:** Moved `corsheaders.middleware.CorsMiddleware` to the top of the MIDDLEWARE list.
+### Case 1 — Django 6.0 / CORS Middleware Order
+**What AI gave:** Settings file with `CorsMiddleware` in the wrong position.
+**What was wrong:** In Django, `CorsMiddleware` must be the very first middleware, before `SecurityMiddleware`. AI placed it after. This caused CORS errors on every preflight request from the React frontend.
+**What I changed:** Manually moved `corsheaders.middleware.CorsMiddleware` to the top of the `MIDDLEWARE` list.
 
-### Case 2 — Empty URL Files Caused Server Crash
-**What AI gave:** Instructions to create empty `urls.py` files for groups, expenses, importer apps using `echo. > filename`.
-**What was wrong:** The `echo.` command on Windows creates a file with content (a dot and newline), not an empty file. Django tried to parse this as Python and crashed with `ImproperlyConfigured: The included URLconf does not appear to have any patterns`.
-**What I changed:** Manually opened each urls.py in VS Code and replaced the content with proper `urlpatterns = []`.
+---
+
+### Case 2 — Windows `echo.` Command Creates Non-Empty Files
+**What AI gave:** `echo. > expenses\urls.py` to create an empty file.
+**What was wrong:** On Windows, `echo.` writes a dot and newline into the file, not nothing. Django tried to parse this as Python and crashed with `ImproperlyConfigured: The included URLconf does not appear to have any patterns`.
+**What I changed:** Manually opened each urls.py in VS Code and typed the correct `urlpatterns = []` content.
+
+---
 
 ### Case 3 — venv Folder Committed to Git
 **What AI gave:** Instructions to `git add .` and commit without first creating a `.gitignore`.
-**What was wrong:** The entire `venv/` folder (thousands of files) was staged and pushed to GitHub, making the commit history polluted and the repo huge.
-**What I changed:** Added `.gitignore` with `venv/`, `__pycache__/`, `*.pyc`, `.env` entries. Then ran `git rm -r --cached venv/` to remove it from tracking.
+**What was wrong:** The entire `venv/` folder (thousands of dependency files, ~50MB) was staged and pushed to GitHub. This made the commit polluted and the repo unusable for others cloning it.
+**What I changed:** Created `.gitignore` with `venv/`, `__pycache__/`, `*.pyc`, `.env` entries. Then ran `git rm -r --cached venv/` to remove it from tracking without deleting the local folder.
 
-### Case 4 — IndentationError in expenses/urls.py
-**What AI gave:** Command `echo. > expenses\urls.py` to create the file.
-**What was wrong:** The Windows `echo.` command added unexpected content causing an IndentationError when Django tried to import the file.
-**What I changed:** Manually typed the correct content in VS Code.
+---
+
+### Case 4 — Balance Breakdown Logic: Incorrect Net Calculation
+**What AI gave:** A balance breakdown endpoint that calculated `net = credit - owed` but did not handle the case where a user both paid for an expense AND is in the split (the typical case — you pay upfront for everyone).
+**What was wrong:** For a user who paid ₹3000 for a dinner and their own share is ₹750, the correct net is `+3000 - 750 = +2250` (they are owed ₹2250 by others). The AI's initial version returned `credit=3000, owed=750` correctly but then separately displayed them without showing the net contribution clearly. On the frontend, this confused the display when a row showed both a credit and an owed amount.
+**What I changed:** Ensured the `net` field always shows `credit - owed` and the frontend renders net with a `+` prefix for positive (gets back) and `-` for negative (owes). Added a totals footer row to make the aggregate clear.
+
+---
+
+### Case 5 — Fuzzy Duplicate Detection Incorrectly Flagged Non-Duplicates
+**What AI gave:** A fuzzy duplicate check using `description[:15]` as the key. This was too aggressive — expenses like "Electricity bill February" and "Electricity bill March" share the same first 15 characters and were being flagged as duplicates.
+**What was wrong:** The fuzzy key `(date, description[:15])` matched across different months because the date was the only differentiator and both were on different dates — but the key included the date, so these should not match. The real bug: for recurring expenses on the SAME date (unlikely but possible), this would cause false positives.
+**What I changed:** Kept the fuzzy check but changed the purpose: it now only adds to `seen_expenses` dict without blocking. Actual skips only happen on exact-key matches. The fuzzy match produces a lower-severity `FUZZY_DUPLICATE` anomaly that is flagged for review but does not skip the row automatically.
 
 ---
 
 ## AI Limitations Observed
 
-1. **Windows vs Mac differences:** AI sometimes gave Unix commands (like `touch` or `source`) that don't work on Windows. Had to translate to Windows equivalents.
-2. **Django version differences:** AI's training data includes older Django versions. Some syntax and settings differ in Django 6.0.
-3. **Context loss:** In a long conversation, AI sometimes forgot earlier decisions and gave inconsistent advice. Had to re-state context.
-4. **Cannot run code:** AI cannot actually test the code it generates. All testing was done manually by running the server and checking outputs.
+1. **Windows vs Unix commands:** AI consistently suggested Unix shell commands (`touch`, `source`, `export`) that don't work in Windows PowerShell. All commands had to be translated.
+2. **Django version drift:** AI's training data includes Django 3.x and 4.x patterns. Some settings and syntax changed in Django 5/6. Had to verify against official docs.
+3. **Context loss in long sessions:** In extended conversations, AI forgot earlier decisions (e.g., that we use `amount_inr` not `amount` for balance calculations) and gave inconsistent code. Had to re-state context repeatedly.
+4. **Cannot run or test code:** AI cannot execute the code it generates. All correctness verification was done by running the server manually, checking API responses in the browser, and testing the UI.
+5. **Overconfident on edge cases:** AI sometimes generated code that handled the happy path correctly but missed edge cases (e.g., what happens when `paid_by` is `None` after a soft delete, or when a split has no members). These were caught during manual testing.

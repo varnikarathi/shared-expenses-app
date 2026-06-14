@@ -112,16 +112,7 @@ def import_csv(request):
     seen_expenses = {}
 
     def log_anomaly(row_num, raw, atype, desc, action, resolution, requires_approval=False):
-        anomalies.append({
-            'row': row_num,
-            'raw': raw,
-            'type': atype,
-            'description': desc,
-            'action': action,
-            'resolution': resolution,
-            'requires_approval': requires_approval
-        })
-        ImportAnomaly.objects.create(
+        db_anomaly = ImportAnomaly.objects.create(
             session=session,
             row_number=row_num,
             raw_data=raw,
@@ -131,6 +122,17 @@ def import_csv(request):
             resolution=resolution,
             requires_approval=requires_approval
         )
+        anomalies.append({
+            'id': db_anomaly.id,
+            'row': row_num,
+            'raw': raw,
+            'type': atype,
+            'description': desc,
+            'action': action,
+            'resolution': resolution,
+            'requires_approval': requires_approval,
+            'approved_by': None,
+        })
 
     for i, row in enumerate(rows, start=2):
         raw = dict(row)
@@ -402,12 +404,15 @@ def import_report(request, session_id):
 
     anomalies = ImportAnomaly.objects.filter(session=session)
     anomaly_data = [{
+        'id': a.id,
         'row': a.row_number,
         'type': a.anomaly_type,
         'description': a.description,
         'action': a.action_taken,
         'resolution': a.resolution,
-        'requires_approval': a.requires_approval
+        'requires_approval': a.requires_approval,
+        'approved_by': a.approved_by.username if a.approved_by else None,
+        'approved_at': a.approved_at,
     } for a in anomalies]
 
     return Response({
@@ -419,4 +424,75 @@ def import_report(request, session_id):
         'imported_rows': session.imported_rows,
         'skipped_rows': session.skipped_rows,
         'anomalies': anomaly_data
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def import_sessions_list(request):
+    """List all past import sessions for the current user's groups."""
+    sessions = ImportSession.objects.order_by('-imported_at')[:50]
+    data = [{
+        'id': s.id,
+        'filename': s.filename,
+        'imported_at': s.imported_at,
+        'status': s.status,
+        'total_rows': s.total_rows,
+        'imported_rows': s.imported_rows,
+        'skipped_rows': s.skipped_rows,
+        'pending_approvals': s.anomalies.filter(requires_approval=True, approved_by=None, action_taken='requires_approval').count(),
+    } for s in sessions]
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def approve_anomaly(request, anomaly_id):
+    """
+    Meera's requirement: approve a flagged anomaly.
+    Updates action_taken to 'auto_fixed' and records who approved and when.
+    """
+    from django.utils import timezone
+    try:
+        anomaly = ImportAnomaly.objects.get(id=anomaly_id)
+    except ImportAnomaly.DoesNotExist:
+        return Response({'error': 'Anomaly not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not anomaly.requires_approval:
+        return Response({'error': 'This anomaly does not require approval'}, status=status.HTTP_400_BAD_REQUEST)
+
+    anomaly.approved_by = request.user
+    anomaly.approved_at = timezone.now()
+    anomaly.action_taken = 'auto_fixed'
+    anomaly.resolution = f'Approved by {request.user.username} on {timezone.now().strftime("%d-%m-%Y %H:%M")}'
+    anomaly.save()
+
+    return Response({
+        'id': anomaly.id,
+        'status': 'approved',
+        'approved_by': request.user.username,
+        'approved_at': anomaly.approved_at,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def reject_anomaly(request, anomaly_id):
+    """
+    Meera's requirement: reject (permanently discard) a flagged anomaly row.
+    Updates action_taken to 'rejected'.
+    """
+    from django.utils import timezone
+    try:
+        anomaly = ImportAnomaly.objects.get(id=anomaly_id)
+    except ImportAnomaly.DoesNotExist:
+        return Response({'error': 'Anomaly not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    anomaly.action_taken = 'rejected'
+    anomaly.resolution = f'Rejected by {request.user.username} on {timezone.now().strftime("%d-%m-%Y %H:%M")}'
+    anomaly.save()
+
+    return Response({
+        'id': anomaly.id,
+        'status': 'rejected',
     })

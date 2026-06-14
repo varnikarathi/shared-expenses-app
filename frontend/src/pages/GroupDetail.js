@@ -23,6 +23,11 @@ export default function GroupDetail() {
   const [memberForm, setMemberForm] = useState({ user_id: '', joined_at: new Date().toISOString().split('T')[0] });
   const [error, setError] = useState('');
 
+  // Balance breakdown (Rohan's requirement)
+  const [breakdownUser, setBreakdownUser] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+
   const fetchAll = useCallback(async () => {
     try {
       const [groupRes, expRes, balRes, sugRes, setRes, usersRes] = await Promise.all([
@@ -83,6 +88,17 @@ export default function GroupDetail() {
     }
   };
 
+  const removeMember = async (userId, username) => {
+    if (!window.confirm(`Remove ${username} from this group? Their expenses will remain in history.`)) return;
+    const left_at = new Date().toISOString().split('T')[0];
+    try {
+      await API.post(`/groups/${id}/remove-member/`, { user_id: userId, left_at });
+      fetchAll();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const deleteExpense = async (expId) => {
     if (!window.confirm('Delete this expense?')) return;
     try {
@@ -90,6 +106,26 @@ export default function GroupDetail() {
       fetchAll();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const fetchBreakdown = async (userId, username) => {
+    if (breakdownUser === userId) {
+      // toggle off
+      setBreakdownUser(null);
+      setBreakdown(null);
+      return;
+    }
+    setBreakdownUser(userId);
+    setBreakdown(null);
+    setBreakdownLoading(true);
+    try {
+      const res = await API.get(`/expenses/${id}/balance-breakdown/${userId}/`);
+      setBreakdown(res.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBreakdownLoading(false);
     }
   };
 
@@ -123,7 +159,14 @@ export default function GroupDetail() {
           <strong>Members:</strong>
           <div className="members-list">
             {members.map(m => (
-              <span key={m.id} className="member-chip">{m.user.username}</span>
+              <span key={m.id} className="member-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                {m.user.username}
+                <button
+                  onClick={() => removeMember(m.user.id, m.user.username)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e74c3c', fontSize: '0.85rem', padding: '0', lineHeight: 1 }}
+                  title={`Remove ${m.user.username}`}
+                >✕</button>
+              </span>
             ))}
           </div>
         </div>
@@ -169,13 +212,76 @@ export default function GroupDetail() {
         {tab === 'balances' && (
           <div>
             <div className="card">
-              <h3 style={{ marginBottom: '1rem' }}>Individual Balances</h3>
+              <h3 style={{ marginBottom: '0.5rem' }}>Individual Balances</h3>
+              <p style={{ color: '#888', fontSize: '0.82rem', marginBottom: '1rem' }}>Click a name to see exactly which expenses make up their balance</p>
               {balances.map((b, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.7rem 0', borderBottom: '1px solid #f0f0f0' }}>
-                  <span>{b.username}</span>
-                  <span className={b.balance > 0 ? 'balance-positive' : b.balance < 0 ? 'balance-negative' : 'balance-zero'}>
-                    {b.balance > 0 ? `gets back ₹${b.balance.toFixed(2)}` : b.balance < 0 ? `owes ₹${Math.abs(b.balance).toFixed(2)}` : 'settled up'}
-                  </span>
+                <div key={i}>
+                  <div
+                    style={{ display: 'flex', justifyContent: 'space-between', padding: '0.7rem 0', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
+                    onClick={() => fetchBreakdown(b.user_id, b.username)}
+                  >
+                    <span style={{ fontWeight: 600 }}>
+                      {b.username}
+                      <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#00d4aa' }}>
+                        {breakdownUser === b.user_id ? '▲ hide' : '▼ details'}
+                      </span>
+                    </span>
+                    <span className={b.balance > 0 ? 'balance-positive' : b.balance < 0 ? 'balance-negative' : 'balance-zero'}>
+                      {b.balance > 0 ? `gets back ₹${b.balance.toFixed(2)}` : b.balance < 0 ? `owes ₹${Math.abs(b.balance).toFixed(2)}` : 'settled up'}
+                    </span>
+                  </div>
+
+                  {/* Balance Breakdown — Rohan's requirement */}
+                  {breakdownUser === b.user_id && (
+                    <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '1rem', margin: '0.5rem 0 1rem', fontSize: '0.85rem' }}>
+                      {breakdownLoading ? (
+                        <p style={{ color: '#888' }}>Loading breakdown...</p>
+                      ) : breakdown ? (
+                        <>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid #e0e0e0', color: '#888' }}>
+                                <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', fontWeight: 600 }}>Date</th>
+                                <th style={{ textAlign: 'left', padding: '0.4rem 0.5rem', fontWeight: 600 }}>Description</th>
+                                <th style={{ textAlign: 'right', padding: '0.4rem 0.5rem', fontWeight: 600 }}>You Paid</th>
+                                <th style={{ textAlign: 'right', padding: '0.4rem 0.5rem', fontWeight: 600 }}>Your Share</th>
+                                <th style={{ textAlign: 'right', padding: '0.4rem 0.5rem', fontWeight: 600 }}>Net</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {breakdown.breakdown.map((row, ri) => (
+                                <tr key={ri} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                  <td style={{ padding: '0.4rem 0.5rem', color: '#888' }}>{row.date}</td>
+                                  <td style={{ padding: '0.4rem 0.5rem' }}>
+                                    {row.description}
+                                    {row.type === 'settlement_sent' && <span style={{ marginLeft: '0.4rem', color: '#00d4aa', fontSize: '0.75rem' }}>↑ paid</span>}
+                                    {row.type === 'settlement_received' && <span style={{ marginLeft: '0.4rem', color: '#ff6b6b', fontSize: '0.75rem' }}>↓ received</span>}
+                                  </td>
+                                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: row.you_paid > 0 ? '#00b894' : '#888' }}>
+                                    {row.you_paid > 0 ? `₹${row.you_paid.toFixed(2)}` : '—'}
+                                  </td>
+                                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: row.your_share > 0 ? '#ff6b6b' : '#888' }}>
+                                    {row.your_share > 0 ? `₹${row.your_share.toFixed(2)}` : '—'}
+                                  </td>
+                                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 600, color: row.net > 0 ? '#00b894' : row.net < 0 ? '#ff6b6b' : '#888' }}>
+                                    {row.net > 0 ? `+₹${row.net.toFixed(2)}` : row.net < 0 ? `-₹${Math.abs(row.net).toFixed(2)}` : '₹0'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr style={{ borderTop: '2px solid #e0e0e0' }}>
+                                <td colSpan="4" style={{ padding: '0.5rem', fontWeight: 700, textAlign: 'right' }}>Total Balance:</td>
+                                <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 700, color: breakdown.total_balance > 0 ? '#00b894' : breakdown.total_balance < 0 ? '#ff6b6b' : '#888' }}>
+                                  {breakdown.total_balance > 0 ? `+₹${breakdown.total_balance.toFixed(2)}` : breakdown.total_balance < 0 ? `-₹${Math.abs(breakdown.total_balance).toFixed(2)}` : '₹0'}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

@@ -1,4 +1,5 @@
 from rest_framework import status
+from collections import defaultdict
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -239,3 +240,87 @@ def settlements_list(request, group_id):
             settlement = serializer.save()
             return Response(SettlementSerializer(settlement).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def balance_breakdown(request, group_id, user_id):
+    """
+    Rohan's requirement: show exactly which expenses make up a person's balance.
+    Returns a list of expenses with how much this user owes or is credited per expense.
+    """
+    try:
+        group = Group.objects.get(id=group_id)
+        target_user = User.objects.get(id=user_id)
+    except (Group.DoesNotExist, User.DoesNotExist):
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    rows = []
+
+    # Expenses where this user paid (credited)
+    for expense in Expense.objects.filter(group=group, is_deleted=False):
+        paid_inr = float(expense.amount_inr or expense.amount)
+
+        # Amount this user is credited (they paid)
+        credit = paid_inr if expense.paid_by_id == user_id else 0
+
+        # Amount this user owes (they are in the split)
+        split = expense.splits.filter(user_id=user_id).first()
+        owed = float(split.amount_owed) if split else 0
+
+        net = credit - owed
+        if credit != 0 or owed != 0:
+            rows.append({
+                'expense_id': expense.id,
+                'description': expense.description,
+                'date': expense.date,
+                'paid_by': expense.paid_by.username if expense.paid_by else '',
+                'total_amount': paid_inr,
+                'currency': expense.currency,
+                'split_type': expense.split_type,
+                'you_paid': credit,
+                'your_share': owed,
+                'net': net,
+                'type': 'expense'
+            })
+
+    # Settlements affecting this user
+    for s in Settlement.objects.filter(group=group):
+        if s.paid_by_id == user_id:
+            rows.append({
+                'expense_id': None,
+                'description': f'Settlement to {s.paid_to.username}',
+                'date': s.date,
+                'paid_by': s.paid_by.username,
+                'total_amount': float(s.amount),
+                'currency': s.currency,
+                'split_type': 'settlement',
+                'you_paid': float(s.amount),
+                'your_share': 0,
+                'net': float(s.amount),
+                'type': 'settlement_sent'
+            })
+        elif s.paid_to_id == user_id:
+            rows.append({
+                'expense_id': None,
+                'description': f'Settlement from {s.paid_by.username}',
+                'date': s.date,
+                'paid_by': s.paid_by.username,
+                'total_amount': float(s.amount),
+                'currency': s.currency,
+                'split_type': 'settlement',
+                'you_paid': 0,
+                'your_share': float(s.amount),
+                'net': -float(s.amount),
+                'type': 'settlement_received'
+            })
+
+    rows.sort(key=lambda x: str(x['date']))
+    total_net = sum(r['net'] for r in rows)
+
+    return Response({
+        'user_id': user_id,
+        'username': target_user.username,
+        'total_balance': round(total_net, 2),
+        'breakdown': rows
+    })
