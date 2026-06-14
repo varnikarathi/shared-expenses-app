@@ -107,7 +107,7 @@ export default function Dashboard() {
                 <label>Group Name</label>
                 <input
                   type="text"
-                  placeholder="Flat expenses"
+                  placeholder="Group Name"
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   required
@@ -117,7 +117,7 @@ export default function Dashboard() {
                 <label>Description (optional)</label>
                 <input
                   type="text"
-                  placeholder="Our shared flat expenses"
+                  placeholder="Description"
                   value={form.description}
                   onChange={e => setForm({ ...form, description: e.target.value })}
                 />

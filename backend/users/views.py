@@ -22,7 +22,6 @@ def register(request):
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login(request):
@@ -34,8 +33,7 @@ def login(request):
     except User.DoesNotExist:
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    user = authenticate(request, username=user.username, password=password)
-    if user:
+    if user.check_password(password):
         refresh = RefreshToken.for_user(user)
         return Response({
             'user': UserSerializer(user).data,

@@ -6,7 +6,6 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.utils import timezone
 from .models import ImportSession, ImportAnomaly
 from expenses.models import Expense, ExpenseSplit, Settlement
 from groups.models import Group, GroupMembership
@@ -25,8 +24,6 @@ KNOWN_MEMBERS = {
 
 MEERA_LEFT = date(2026, 3, 31)
 SAM_JOINED = date(2026, 4, 15)
-DEV_JOINED = date(2026, 2, 8)
-DEV_LEFT = date(2026, 2, 10)
 
 
 def parse_date(raw):
@@ -77,6 +74,10 @@ def parse_amount(raw):
         return None, f"Cannot parse amount: '{raw}'"
 
 
+def get_user(name):
+    return User.objects.filter(username__iexact=name).first()
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def import_csv(request):
@@ -89,7 +90,6 @@ def import_csv(request):
     except Group.DoesNotExist:
         return Response({'error': 'Group not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Load members into KNOWN_MEMBERS
     for membership in GroupMembership.objects.filter(group=group):
         uname = membership.user.username.lower()
         KNOWN_MEMBERS[uname] = membership.user
@@ -134,7 +134,6 @@ def import_csv(request):
 
     for i, row in enumerate(rows, start=2):
         raw = dict(row)
-        row_errors = []
 
         # Skip blank rows
         if all(not v.strip() for v in row.values() if v):
@@ -142,7 +141,7 @@ def import_csv(request):
             skipped.append(i)
             continue
 
-        # --- DATE ---
+        # DATE
         raw_date = row.get('date', '').strip()
         parsed_date, date_error = parse_date(raw_date)
         if date_error:
@@ -150,16 +149,17 @@ def import_csv(request):
             skipped.append(i)
             continue
 
-        # --- DESCRIPTION ---
+        # DESCRIPTION
         description = row.get('description', '').strip()
         if not description:
             description = 'Unnamed expense'
             log_anomaly(i, raw, 'MISSING_DESCRIPTION', 'Description is blank', 'auto_fixed', 'Set to "Unnamed expense"')
 
-        # --- SETTLEMENT DETECTION ---
+        # SETTLEMENT DETECTION
         notes = row.get('notes', '').strip().lower()
         desc_lower = description.lower()
-        if any(kw in desc_lower or kw in notes for kw in ['settlement', 'paid back', 'paid aisha back', 'deposit share']):
+        settlement_keywords = ['settlement', 'paid back', 'paid aisha back', 'deposit share']
+        if any(kw in desc_lower or kw in notes for kw in settlement_keywords):
             log_anomaly(i, raw, 'SETTLEMENT_AS_EXPENSE',
                 f'Row "{description}" appears to be a settlement, not an expense',
                 'auto_fixed', 'Reclassified as settlement')
@@ -177,9 +177,9 @@ def import_csv(request):
 
             amount, amt_err = parse_amount(row.get('amount', ''))
             if not amt_err and payer_name and payee_name:
-                try:
-                    payer = User.objects.get(username__iexact=payer_name)
-                    payee = User.objects.get(username__iexact=payee_name)
+                payer = get_user(payer_name)
+                payee = get_user(payee_name)
+                if payer and payee:
                     Settlement.objects.create(
                         group=group,
                         paid_by=payer,
@@ -189,12 +189,10 @@ def import_csv(request):
                         date=parsed_date,
                         notes=row.get('notes', '')
                     )
-                except User.DoesNotExist:
-                    pass
             imported.append(i)
             continue
 
-        # --- AMOUNT ---
+        # AMOUNT
         raw_amount = row.get('amount', '').strip()
         amount, amt_error = parse_amount(raw_amount)
         if amt_error:
@@ -202,58 +200,52 @@ def import_csv(request):
             skipped.append(i)
             continue
 
-        # Zero amount
         if amount == 0:
             log_anomaly(i, raw, 'ZERO_AMOUNT', f'Amount is 0 for "{description}"', 'skipped', 'Skipped - likely a correction placeholder')
             skipped.append(i)
             continue
 
-        # Negative amount - treat as refund
-        is_refund = False
         if amount < 0:
             log_anomaly(i, raw, 'NEGATIVE_AMOUNT', f'Negative amount {amount} for "{description}"', 'auto_fixed', 'Treated as refund (negative expense)')
-            is_refund = True
 
-        # Precision fix
         rounded = amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         if rounded != amount:
             log_anomaly(i, raw, 'PRECISION', f'Amount {amount} has >2 decimal places', 'auto_fixed', f'Rounded to {rounded}')
             amount = rounded
 
-        # --- CURRENCY ---
+        # CURRENCY
         currency = row.get('currency', '').strip().upper()
         if not currency:
             currency = 'INR'
             log_anomaly(i, raw, 'MISSING_CURRENCY', 'Currency field is blank', 'auto_fixed', 'Defaulted to INR')
         if currency not in ['INR', 'USD']:
             currency = 'INR'
-            log_anomaly(i, raw, 'INVALID_CURRENCY', f'Unknown currency, defaulting to INR', 'auto_fixed', 'Set to INR')
+            log_anomaly(i, raw, 'INVALID_CURRENCY', 'Unknown currency, defaulting to INR', 'auto_fixed', 'Set to INR')
 
         amount_inr = amount
         if currency == 'USD':
             amount_inr = (amount * USD_TO_INR).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             log_anomaly(i, raw, 'USD_CONVERSION', f'USD amount {amount} converted to INR', 'auto_fixed', f'Converted at rate 83.5: ₹{amount_inr}')
 
-        # --- PAID BY ---
+        # PAID BY
         raw_paid_by = row.get('paid_by', '').strip()
         paid_by_name = normalize_name(raw_paid_by)
         if not paid_by_name:
             paid_by_name = fuzzy_match_name(raw_paid_by)
             if paid_by_name:
-                log_anomaly(i, raw, 'NAME_CASE', f'paid_by "{raw_paid_by}" normalized to "{paid_by_name}"', 'auto_fixed', f'Normalized name')
+                log_anomaly(i, raw, 'NAME_CASE', f'paid_by "{raw_paid_by}" normalized to "{paid_by_name}"', 'auto_fixed', 'Normalized name')
             else:
                 log_anomaly(i, raw, 'MISSING_PAYER', f'paid_by "{raw_paid_by}" is unknown', 'skipped', 'Row skipped - cannot identify payer')
                 skipped.append(i)
                 continue
 
-        try:
-            paid_by_user = User.objects.get(username__iexact=paid_by_name)
-        except User.DoesNotExist:
+        paid_by_user = get_user(paid_by_name)
+        if not paid_by_user:
             log_anomaly(i, raw, 'USER_NOT_FOUND', f'User "{paid_by_name}" not in database', 'skipped', 'Row skipped')
             skipped.append(i)
             continue
 
-        # --- SPLIT TYPE ---
+        # SPLIT TYPE
         split_type_raw = row.get('split_type', '').strip().lower()
         split_type_map = {
             'equal': 'equal', 'equally': 'equal',
@@ -265,7 +257,7 @@ def import_csv(request):
         if not split_type_raw:
             log_anomaly(i, raw, 'MISSING_SPLIT_TYPE', 'split_type is blank', 'auto_fixed', 'Defaulted to equal split')
 
-        # --- SPLIT WITH ---
+        # SPLIT WITH
         split_with_raw = row.get('split_with', '').strip()
         split_members = []
         if split_with_raw:
@@ -273,11 +265,9 @@ def import_csv(request):
             for p in parts:
                 name = normalize_name(p) or fuzzy_match_name(p)
                 if name:
-                    try:
-                        u = User.objects.get(username__iexact=name)
+                    u = get_user(name)
+                    if u:
                         split_members.append(u)
-                    except User.DoesNotExist:
-                        pass
                 else:
                     log_anomaly(i, raw, 'UNKNOWN_MEMBER', f'"{p}" is not a known member', 'auto_fixed', f'Excluded "{p}" from split')
 
@@ -285,7 +275,7 @@ def import_csv(request):
             memberships = GroupMembership.objects.filter(group=group, is_active=True)
             split_members = [m.user for m in memberships]
 
-        # --- MEMBERSHIP DATE CHECKS ---
+        # MEMBERSHIP DATE CHECKS
         final_members = []
         for member in split_members:
             uname = member.username.lower()
@@ -304,7 +294,7 @@ def import_csv(request):
         if not final_members:
             final_members = [paid_by_user]
 
-        # --- PERCENTAGE VALIDATION ---
+        # PERCENTAGE VALIDATION
         split_details_raw = row.get('split_details', '').strip()
         split_details = {}
         if split_type == 'percentage' and split_details_raw:
@@ -316,8 +306,9 @@ def import_csv(request):
                     total_pct += Decimal(pct.strip())
                     u = normalize_name(name) or fuzzy_match_name(name)
                     if u:
-                        user = User.objects.get(username__iexact=u)
-                        split_details[str(user.id)] = pct.strip()
+                        user = get_user(u)
+                        if user:
+                            split_details[str(user.id)] = pct.strip()
                 if abs(total_pct - 100) > Decimal('0.01'):
                     log_anomaly(i, raw, 'PERCENT_SUM_INVALID',
                         f'Percentages sum to {total_pct}, not 100%',
@@ -327,7 +318,7 @@ def import_csv(request):
             except Exception:
                 split_type = 'equal'
 
-        # --- DUPLICATE DETECTION ---
+        # DUPLICATE DETECTION
         dup_key = (str(parsed_date), description.lower().strip(), str(amount))
         if dup_key in seen_expenses:
             log_anomaly(i, raw, 'DUPLICATE',
@@ -338,17 +329,15 @@ def import_csv(request):
             continue
         seen_expenses[dup_key] = i
 
-        # Also check fuzzy duplicate (same date, similar description)
         fuzzy_key = (str(parsed_date), description.lower()[:15])
         if fuzzy_key in seen_expenses:
             log_anomaly(i, raw, 'FUZZY_DUPLICATE',
                 f'Possible duplicate of row {seen_expenses[fuzzy_key]}: same date, similar description',
                 'requires_approval', 'Flagged for review',
                 requires_approval=True)
-
         seen_expenses[fuzzy_key] = i
 
-        # --- CREATE EXPENSE ---
+        # CREATE EXPENSE
         expense = Expense.objects.create(
             group=group,
             description=description,
@@ -362,7 +351,6 @@ def import_csv(request):
             import_row=i
         )
 
-        # Create splits
         amt_inr = abs(amount_inr)
         if split_type == 'equal' and final_members:
             share = (amt_inr / len(final_members)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -372,13 +360,15 @@ def import_csv(request):
                 ExpenseSplit.objects.create(expense=expense, user=member, amount_owed=owed)
         elif split_type == 'percentage' and split_details:
             for uid, pct in split_details.items():
-                user = User.objects.get(id=int(uid))
-                owed = (amt_inr * Decimal(str(pct)) / 100).quantize(Decimal('0.01'))
-                ExpenseSplit.objects.create(expense=expense, user=user, amount_owed=owed, percentage=Decimal(str(pct)))
+                user = User.objects.filter(id=int(uid)).first()
+                if user:
+                    owed = (amt_inr * Decimal(str(pct)) / 100).quantize(Decimal('0.01'))
+                    ExpenseSplit.objects.create(expense=expense, user=user, amount_owed=owed, percentage=Decimal(str(pct)))
         else:
-            share = (amt_inr / len(final_members)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            for member in final_members:
-                ExpenseSplit.objects.create(expense=expense, user=member, amount_owed=share)
+            if final_members:
+                share = (amt_inr / len(final_members)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                for member in final_members:
+                    ExpenseSplit.objects.create(expense=expense, user=member, amount_owed=share)
 
         imported.append(i)
 
