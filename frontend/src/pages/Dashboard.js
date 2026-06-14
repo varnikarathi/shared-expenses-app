@@ -4,7 +4,6 @@ import API from '../api';
 
 export default function Dashboard() {
   const [groups, setGroups] = useState([]);
-  const [users, setUsers] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: '', description: '' });
   const [loading, setLoading] = useState(true);
@@ -13,7 +12,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchGroups();
-    fetchUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchGroups = async () => {
@@ -24,15 +23,6 @@ export default function Dashboard() {
       console.error(err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchUsers = async () => {
-    try {
-      const res = await API.get('/users/list/');
-      setUsers(res.data);
-    } catch (err) {
-      console.error(err);
     }
   };
 

@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import API from '../api';
 
 export default function GroupDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [balances, setBalances] = useState([]);
@@ -24,11 +23,7 @@ export default function GroupDetail() {
   const [memberForm, setMemberForm] = useState({ user_id: '', joined_at: new Date().toISOString().split('T')[0] });
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchAll();
-  }, [id]);
-
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     try {
       const [groupRes, expRes, balRes, sugRes, setRes, usersRes] = await Promise.all([
         API.get(`/groups/${id}/`),
@@ -47,7 +42,11 @@ export default function GroupDetail() {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [id, fetchAll]);
 
   const createExpense = async (e) => {
     e.preventDefault();
